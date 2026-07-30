@@ -1,0 +1,64 @@
+name: Mirror Itch.io to Releases
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # co 10 minut
+  workflow_dispatch:
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install itch-downloader
+        run: |
+          curl -L https://github.com/BraedonWooding/itch-downloader/releases/latest/download/itch-downloader \
+            -o /usr/local/bin/itch-downloader
+          chmod +x /usr/local/bin/itch-downloader
+
+      - name: Download uploads from itch.io
+        run: |
+          mkdir -p mirror
+          itch-downloader dl \
+            --api-key "${{ secrets.ITCH_API_KEY }}" \
+            --output ./mirror
+
+      - name: List downloaded files
+        id: listfiles
+        run: |
+          files=$(ls mirror)
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$files" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: "mirror-$(date +'%Y-%m-%d_%H-%M-%S')"
+          release_name: "Mirror $(date +'%Y-%m-%d %H:%M:%S')"
+          draft: false
+          prerelease: false
+
+      - name: Upload assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          i=1
+          for file in ${{ steps.listfiles.outputs.files }}; do
+            newname=$(printf "%02d-%s" "$i" "$file")
+            echo "Uploading $file as $newname"
+
+            gh release upload \
+              "${{ steps.create_release.outputs.tag_name }}" \
+              "mirror/$file" \
+              --clobber \
+              --name "$newname"
+
+            i=$((i+1))
+          done
