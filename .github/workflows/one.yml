@@ -2,16 +2,21 @@ name: Mirror Itch.io to Releases
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # co 10 minut
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 jobs:
-  mirror:
+ mirror:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+
+      - name: Install GitHub CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install gh -y
 
       - name: Install itch-downloader
         run: |
@@ -24,41 +29,43 @@ jobs:
           mkdir -p mirror
           itch-downloader dl \
             --api-key "${{ secrets.ITCH_API_KEY }}" \
-            --output ./mirror
+            --output mirror
 
-      - name: List downloaded files
-        id: listfiles
+      - name: Generate release info
+        id: release
         run: |
-          files=$(ls mirror)
-          echo "files<<EOF" >> $GITHUB_OUTPUT
-          echo "$files" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          TAG="mirror-$(date +'%Y-%m-%d_%H-%M-%S')"
+          NAME="Mirror $(date +'%Y-%m-%d %H:%M:%S')"
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
 
       - name: Create release
-        id: create_release
-        uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: "mirror-$(date +'%Y-%m-%d_%H-%M-%S')"
-          release_name: "Mirror $(date +'%Y-%m-%d %H:%M:%S')"
-          draft: false
-          prerelease: false
+        run: |
+          gh release create \
+            "${{ steps.release.outputs.tag }}" \
+            --title "${{ steps.release.outputs.name }}"
 
       - name: Upload assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           i=1
-          for file in ${{ steps.listfiles.outputs.files }}; do
-            newname=$(printf "%02d-%s" "$i" "$file")
-            echo "Uploading $file as $newname"
+
+          find mirror -maxdepth 1 -type f -print0 | sort -z |
+          while IFS= read -r -d '' file; do
+            base=$(basename "$file")
+            newname=$(printf "%02d-%s" "$i" "$base")
+
+            cp "$file" "/tmp/$newname"
+
+            echo "Uploading $newname"
 
             gh release upload \
-              "${{ steps.create_release.outputs.tag_name }}" \
-              "mirror/$file" \
-              --clobber \
-              --name "$newname"
+              "${{ steps.release.outputs.tag }}" \
+              "/tmp/$newname"
 
             i=$((i+1))
           done
